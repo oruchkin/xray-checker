@@ -25,6 +25,7 @@ type RemoteWriteConfig struct {
 var (
 	proxyStatus     *prometheus.GaugeVec
 	proxyLatency    *prometheus.GaugeVec
+	proxyIPMatch    *prometheus.GaugeVec
 	metricsInstance string
 	hasInstance     bool
 )
@@ -52,6 +53,19 @@ func InitMetrics(instance string) {
 			Help: "Latency of proxy connection in milliseconds, 0 if failed",
 		},
 		labels,
+	)
+
+	ipMatchLabels := []string{"protocol", "address", "name", "sub_name", "exit_ip"}
+	if hasInstance {
+		ipMatchLabels = append(ipMatchLabels, "instance")
+	}
+
+	proxyIPMatch = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "xray_proxy_ip_match",
+			Help: "Whether proxy exit IP matches expected IP (1: match, 0: mismatch)",
+		},
+		ipMatchLabels,
 	)
 }
 
@@ -85,6 +99,27 @@ func DeleteProxyStatus(protocol, address, name, subName string) {
 
 func DeleteProxyLatency(protocol, address, name, subName string) {
 	proxyLatency.DeleteLabelValues(buildLabelValues(protocol, address, name, subName)...)
+}
+
+func buildIPMatchLabelValues(protocol, address, name, subName, exitIP string) []string {
+	labels := []string{protocol, address, name, subName, exitIP}
+	if hasInstance {
+		labels = append(labels, metricsInstance)
+	}
+	return labels
+}
+
+func RecordProxyIPMatch(protocol, address, name, subName, exitIP string, value float64) {
+	proxyIPMatch.WithLabelValues(buildIPMatchLabelValues(protocol, address, name, subName, exitIP)...).Set(value)
+}
+
+func DeleteProxyIPMatch(protocol, address, name, subName string) {
+	proxyIPMatch.DeletePartialMatch(prometheus.Labels{
+		"protocol": protocol,
+		"address":  address,
+		"name":     name,
+		"sub_name": subName,
+	})
 }
 
 func ParseURL(remoteWriteURL string) (*RemoteWriteConfig, error) {

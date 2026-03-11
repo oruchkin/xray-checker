@@ -773,6 +773,17 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 		}
 	}
 
+	// Parse expected_ip from name fragment (format: "name|expected_ip=X.X.X.X")
+	if idx := strings.Index(pc.Name, "|"); idx != -1 {
+		rest := pc.Name[idx+1:]
+		pc.Name = pc.Name[:idx]
+		for _, part := range strings.Split(rest, "|") {
+			if strings.HasPrefix(part, "expected_ip=") {
+				pc.ExpectedIP = strings.TrimPrefix(part, "expected_ip=")
+			}
+		}
+	}
+
 	if err := pc.Validate(); err != nil {
 		return nil, err
 	}

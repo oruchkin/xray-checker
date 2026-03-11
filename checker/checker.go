@@ -150,9 +150,10 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 	var checkErr error
 	var logMessage string
 	var latency time.Duration
+	var proxyIP string
 
 	if pc.checkMethod == "ip" {
-		checkSuccess, logMessage, latency, checkErr = pc.checkByIP(client)
+		checkSuccess, logMessage, latency, proxyIP, checkErr = pc.checkByIP(client)
 	} else if pc.checkMethod == "status" {
 		checkSuccess, logMessage, latency, checkErr = pc.checkByGen(client)
 	} else if pc.checkMethod == "download" {
@@ -162,11 +163,15 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 		return
 	}
 
+	address := fmt.Sprintf("%s:%d", proxy.Server, proxy.Port)
+
 	if checkErr != nil {
 		logger.Error("%s | %v", proxy.Name, checkErr)
 		setFailedStatus()
 		setFailedLatency()
-
+		if proxy.ExpectedIP != "" && isGenerationValid() {
+			metrics.RecordProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName, "", 0)
+		}
 		return
 	}
 
@@ -174,36 +179,46 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 		logger.Error("%s | Failed | %s | Latency: %s", proxy.Name, logMessage, latency)
 		setFailedStatus()
 		setFailedLatency()
+		if proxy.ExpectedIP != "" && isGenerationValid() {
+			metrics.RecordProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName, "", 0)
+		}
 	} else {
 		logger.Result("%s | Success | %s | Latency: %s", proxy.Name, logMessage, latency)
 		if !isGenerationValid() {
 			logger.Debug("%s | Skipping metric update: generation changed", proxy.Name)
 			return
 		}
-		metrics.RecordProxyStatus(
-			proxy.Protocol,
-			fmt.Sprintf("%s:%d", proxy.Server, proxy.Port),
-			proxy.Name,
-			proxy.SubName,
-			1,
-		)
-		metrics.RecordProxyLatency(
-			proxy.Protocol,
-			fmt.Sprintf("%s:%d", proxy.Server, proxy.Port),
-			proxy.Name,
-			proxy.SubName,
-			latency,
-		)
+		metrics.RecordProxyStatus(proxy.Protocol, address, proxy.Name, proxy.SubName, 1)
+		metrics.RecordProxyLatency(proxy.Protocol, address, proxy.Name, proxy.SubName, latency)
+
+		if proxy.ExpectedIP != "" {
+			exitIP := strings.TrimSpace(proxyIP)
+			if exitIP == "" {
+				if fetched, err := pc.getExitIP(client); err == nil {
+					exitIP = fetched
+				}
+			}
+			ipMatch := 0.0
+			if exitIP != "" && exitIP == proxy.ExpectedIP {
+				ipMatch = 1.0
+			}
+			metrics.RecordProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName, exitIP, ipMatch)
+			if ipMatch == 1 {
+				logger.Result("%s | IP Match: %s == %s", proxy.Name, exitIP, proxy.ExpectedIP)
+			} else {
+				logger.Error("%s | IP Mismatch: got %s, expected %s", proxy.Name, exitIP, proxy.ExpectedIP)
+			}
+		}
 
 		pc.latencyMetrics.Store(metricKey, latency)
 		pc.currentMetrics.Store(metricKey, true)
 	}
 }
 
-func (pc *ProxyChecker) checkByIP(client *http.Client) (bool, string, time.Duration, error) {
+func (pc *ProxyChecker) checkByIP(client *http.Client) (bool, string, time.Duration, string, error) {
 	req, err := http.NewRequest("GET", pc.ipCheck, nil)
 	if err != nil {
-		return false, "", 0, err
+		return false, "", 0, "", err
 	}
 
 	var ttfb time.Duration
@@ -217,18 +232,31 @@ func (pc *ProxyChecker) checkByIP(client *http.Client) (bool, string, time.Durat
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, "", 0, err
+		return false, "", 0, "", err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, "", ttfb, err
+		return false, "", ttfb, "", err
 	}
 
-	proxyIP := string(body)
+	proxyIP := strings.TrimSpace(string(body))
 	logMessage := fmt.Sprintf("Source IP: %s | Proxy IP: %s", pc.currentIP, proxyIP)
-	return proxyIP != pc.currentIP, logMessage, ttfb, nil
+	return proxyIP != pc.currentIP, logMessage, ttfb, proxyIP, nil
+}
+
+func (pc *ProxyChecker) getExitIP(client *http.Client) (string, error) {
+	resp, err := client.Get(pc.ipCheck)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(body)), nil
 }
 
 func (pc *ProxyChecker) checkByGen(client *http.Client) (bool, string, time.Duration, error) {
@@ -324,6 +352,7 @@ func (pc *ProxyChecker) ClearMetrics() {
 		if len(parts) >= 4 {
 			metrics.DeleteProxyStatus(parts[0], parts[1], parts[2], parts[3])
 			metrics.DeleteProxyLatency(parts[0], parts[1], parts[2], parts[3])
+			metrics.DeleteProxyIPMatch(parts[0], parts[1], parts[2], parts[3])
 		}
 		pc.currentMetrics.Delete(key)
 		return true
