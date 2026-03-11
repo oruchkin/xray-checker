@@ -77,6 +77,10 @@ func GetProxyLatencyMetric() *prometheus.GaugeVec {
 	return proxyLatency
 }
 
+func GetProxyIPMatchMetric() *prometheus.GaugeVec {
+	return proxyIPMatch
+}
+
 func buildLabelValues(protocol, address, name, subName string) []string {
 	labels := []string{protocol, address, name, subName}
 	if hasInstance {

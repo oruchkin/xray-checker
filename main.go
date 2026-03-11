@@ -85,6 +85,7 @@ func main() {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(metrics.GetProxyStatusMetric())
 	registry.MustRegister(metrics.GetProxyLatencyMetric())
+	registry.MustRegister(metrics.GetProxyIPMatchMetric())
 
 	proxyChecker := checker.NewProxyChecker(
 		*proxyConfigs,
