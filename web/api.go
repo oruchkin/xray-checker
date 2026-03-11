@@ -26,6 +26,8 @@ type ProxyInfo struct {
 	ProxyPort int    `json:"proxyPort"`
 	Online    bool   `json:"online"`
 	LatencyMs int64  `json:"latencyMs"`
+	IPMatch   *bool  `json:"ipMatch,omitempty"`
+	ExitIP    string `json:"exitIp,omitempty"`
 }
 
 type PublicProxyInfo struct {
@@ -33,6 +35,8 @@ type PublicProxyInfo struct {
 	Name      string `json:"name"`
 	Online    bool   `json:"online"`
 	LatencyMs int64  `json:"latencyMs"`
+	IPMatch   *bool  `json:"ipMatch,omitempty"`
+	ExitIP    string `json:"exitIp,omitempty"`
 }
 
 type StatusResponse struct {
@@ -116,12 +120,17 @@ func APIPublicProxiesHandler(proxyChecker *checker.ProxyChecker) http.HandlerFun
 
 		for _, proxy := range proxies {
 			status, latency, _ := proxyChecker.GetProxyStatus(proxy.Name)
-			result = append(result, PublicProxyInfo{
+			info := PublicProxyInfo{
 				StableID:  proxy.StableID,
 				Name:      proxy.Name,
 				Online:    status,
 				LatencyMs: latency.Milliseconds(),
-			})
+			}
+			if ipResult, hasExpected := proxyChecker.GetProxyIPMatch(proxy.Name); hasExpected && ipResult != nil {
+				info.IPMatch = &ipResult.Matched
+				info.ExitIP = ipResult.ExitIP
+			}
+			result = append(result, info)
 		}
 
 		writeJSON(w, result)

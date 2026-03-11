@@ -19,14 +19,17 @@ var (
 )
 
 type EndpointInfo struct {
-	Name       string
-	ServerInfo string
-	URL        string
-	ProxyPort  int
-	Index      int
-	Status     bool
-	Latency    time.Duration
-	StableID   string
+	Name           string
+	ServerInfo     string
+	URL            string
+	ProxyPort      int
+	Index          int
+	Status         bool
+	Latency        time.Duration
+	StableID       string
+	HasExpectedIP  bool
+	IPMatched      bool
+	ExitIP         string
 }
 
 func IndexHandler(version string, proxyChecker *checker.ProxyChecker) http.HandlerFunc {
@@ -161,7 +164,7 @@ func RegisterConfigEndpoints(proxies []*models.ProxyConfig, proxyChecker *checke
 
 		status, latency, _ := proxyChecker.GetProxyStatus(proxy.Name)
 
-		endpoints = append(endpoints, EndpointInfo{
+		ep := EndpointInfo{
 			Name:       proxy.Name,
 			ServerInfo: fmt.Sprintf("%s:%d", proxy.Server, proxy.Port),
 			URL:        endpoint,
@@ -170,7 +173,17 @@ func RegisterConfigEndpoints(proxies []*models.ProxyConfig, proxyChecker *checke
 			Status:     status,
 			Latency:    latency,
 			StableID:   proxy.StableID,
-		})
+		}
+
+		if result, hasExpected := proxyChecker.GetProxyIPMatch(proxy.Name); hasExpected {
+			ep.HasExpectedIP = true
+			if result != nil {
+				ep.IPMatched = result.Matched
+				ep.ExitIP = result.ExitIP
+			}
+		}
+
+		endpoints = append(endpoints, ep)
 	}
 
 	endpointsMu.Lock()

@@ -17,6 +17,11 @@ import (
 	"xray-checker/models"
 )
 
+type IPMatchResult struct {
+	Matched bool
+	ExitIP  string
+}
+
 type ProxyChecker struct {
 	proxies         []*models.ProxyConfig
 	startPort       int
@@ -25,6 +30,7 @@ type ProxyChecker struct {
 	httpClient      *http.Client
 	currentMetrics  sync.Map
 	latencyMetrics  sync.Map
+	ipMatchResults  sync.Map
 	ipInitialized   bool
 	ipCheckTimeout  int
 	genMethodURL    string
@@ -202,8 +208,10 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 			if exitIP != "" && exitIP == proxy.ExpectedIP {
 				ipMatch = 1.0
 			}
+			matched := exitIP != "" && exitIP == proxy.ExpectedIP
 			metrics.RecordProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName, exitIP, ipMatch)
-			if ipMatch == 1 {
+			pc.ipMatchResults.Store(metricKey, IPMatchResult{Matched: matched, ExitIP: exitIP})
+			if matched {
 				logger.Result("%s | IP Match: %s == %s", proxy.Name, exitIP, proxy.ExpectedIP)
 			} else {
 				logger.Error("%s | IP Mismatch: got %s, expected %s", proxy.Name, exitIP, proxy.ExpectedIP)
@@ -362,6 +370,11 @@ func (pc *ProxyChecker) ClearMetrics() {
 		pc.latencyMetrics.Delete(key)
 		return true
 	})
+
+	pc.ipMatchResults.Range(func(key, _ interface{}) bool {
+		pc.ipMatchResults.Delete(key)
+		return true
+	})
 }
 
 func (pc *ProxyChecker) UpdateProxies(newProxies []*models.ProxyConfig) {
@@ -432,6 +445,36 @@ func (pc *ProxyChecker) GetProxyStatus(name string) (bool, time.Duration, error)
 	}
 
 	return status.(bool), latency.(time.Duration), nil
+}
+
+func (pc *ProxyChecker) GetProxyIPMatch(name string) (result *IPMatchResult, hasExpectedIP bool) {
+	pc.mu.RLock()
+	var metricKey string
+	var expectedIP string
+	for _, proxy := range pc.proxies {
+		if proxy.Name == name {
+			if proxy.StableID == "" {
+				proxy.StableID = proxy.GenerateStableID()
+			}
+			expectedIP = proxy.ExpectedIP
+			metricKey = fmt.Sprintf("%s|%s:%d|%s|%s|%s",
+				proxy.Protocol, proxy.Server, proxy.Port,
+				proxy.Name, proxy.SubName, proxy.StableID,
+			)
+			break
+		}
+	}
+	pc.mu.RUnlock()
+
+	if expectedIP == "" {
+		return nil, false
+	}
+
+	if val, ok := pc.ipMatchResults.Load(metricKey); ok {
+		r := val.(IPMatchResult)
+		return &r, true
+	}
+	return nil, true
 }
 
 func (pc *ProxyChecker) GetProxyByStableID(stableID string) (*models.ProxyConfig, bool) {
