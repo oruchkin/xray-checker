@@ -176,6 +176,7 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 		setFailedStatus()
 		setFailedLatency()
 		if proxy.ExpectedIP != "" && isGenerationValid() {
+			metrics.DeleteProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName)
 			metrics.RecordProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName, "", 0)
 		}
 		return
@@ -186,6 +187,7 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 		setFailedStatus()
 		setFailedLatency()
 		if proxy.ExpectedIP != "" && isGenerationValid() {
+			metrics.DeleteProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName)
 			metrics.RecordProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName, "", 0)
 		}
 	} else {
@@ -209,6 +211,8 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 				ipMatch = 1.0
 			}
 			matched := exitIP != "" && exitIP == proxy.ExpectedIP
+			// Удаляем старые метрики с предыдущим exit_ip перед записью новых
+			metrics.DeleteProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName)
 			metrics.RecordProxyIPMatch(proxy.Protocol, address, proxy.Name, proxy.SubName, exitIP, ipMatch)
 			pc.ipMatchResults.Store(metricKey, IPMatchResult{Matched: matched, ExitIP: exitIP})
 			if matched {
